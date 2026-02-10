@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { Lembrete } from "@/types/lembrete";
+import { storageService } from "@/lib/storage";
 import LembreteForm from "@/components/LembreteForm";
 import LembreteItem from "@/components/LembreteItem";
 import FiltrosLembretes from "@/components/FiltrosLembretes";
 import Toast from "@/components/Toast";
 import ConfirmacaoModal from "@/components/ConfirmacaoModal";
+import DataExport from "@/components/DataExport";
 
 export default function Home() {
   const [lembretes, setLembretes] = useState<Lembrete[]>([]);
@@ -24,57 +26,99 @@ export default function Home() {
   const [lembreteParaDeletar, setLembreteParaDeletar] = useState<string | null>(
     null
   );
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const salvos = localStorage.getItem("lembretes");
-    if (salvos) {
-      setLembretes(JSON.parse(salvos));
-    }
+    const loadLembretes = async () => {
+      try {
+        const data = await storageService.getLembretes();
+        setLembretes(data);
+      } catch (error) {
+        console.error("Error loading lembretes:", error);
+        mostrarToast("Erro ao carregar lembretes", "error");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadLembretes();
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("lembretes", JSON.stringify(lembretes));
-  }, [lembretes]);
+    if (!isLoading && lembretes.length > 0) {
+      storageService.createBackup();
+    }
+  }, [lembretes, isLoading]);
 
-  const adicionarLembrete = (texto: string) => {
-    const novoLembrete: Lembrete = {
-      id: crypto.randomUUID(),
-      texto,
-      concluido: false,
-      criadoEm: new Date(),
-    };
-    setLembretes([novoLembrete, ...lembretes]);
-    mostrarToast("Lembrete adicionado com sucesso!");
+  const adicionarLembrete = async (texto: string) => {
+    try {
+      const novoLembrete = await storageService.createLembrete({
+        texto,
+        concluido: false,
+        criadoEm: new Date(),
+      });
+      
+      setLembretes([novoLembrete, ...lembretes]);
+      mostrarToast("Lembrete adicionado com sucesso!");
+    } catch (error) {
+      console.error("Error adding lembrete:", error);
+      mostrarToast("Erro ao adicionar lembrete", "error");
+    }
   };
 
-  const toggleConcluido = (id: string) => {
-    setLembretes(
-      lembretes.map((lembrete) => {
-        if (lembrete.id === id) {
-          const novoEstado = !lembrete.concluido;
-          return {
-            ...lembrete,
-            concluido: novoEstado,
-            concluidoEm: novoEstado ? new Date() : undefined,
-          };
-        }
-        return lembrete;
-      })
-    );
+  const toggleConcluido = async (id: string) => {
+    try {
+      const lembrete = lembretes.find(l => l.id === id);
+      if (!lembrete) return;
+      
+      const novoEstado = !lembrete.concluido;
+      const updatedLembrete = await storageService.updateLembrete(id, {
+        concluido: novoEstado,
+        concluidoEm: novoEstado ? new Date() : undefined,
+      });
+      
+      if (updatedLembrete) {
+        setLembretes(
+          lembretes.map((l) => (l.id === id ? updatedLembrete : l))
+        );
+      }
+    } catch (error) {
+      console.error("Error toggling lembrete:", error);
+      mostrarToast("Erro ao atualizar lembrete", "error");
+    }
   };
 
-  const editarLembrete = (id: string, texto: string) => {
-    setLembretes(
-      lembretes.map((lembrete) =>
-        lembrete.id === id ? { ...lembrete, texto } : lembrete
-      )
-    );
-    setLembreteEditando(null);
-    mostrarToast("Lembrete atualizado com sucesso!");
+  const editarLembrete = async (id: string, texto: string) => {
+    try {
+      const updatedLembrete = await storageService.updateLembrete(id, { texto });
+      
+      if (updatedLembrete) {
+        setLembretes(
+          lembretes.map((lembrete) =>
+            lembrete.id === id ? updatedLembrete : lembrete
+          )
+        );
+        setLembreteEditando(null);
+        mostrarToast("Lembrete atualizado com sucesso!");
+      }
+    } catch (error) {
+      console.error("Error editing lembrete:", error);
+      mostrarToast("Erro ao editar lembrete", "error");
+    }
   };
 
-  const deletarLembrete = (id: string) => {
-    setLembretes(lembretes.filter((lembrete) => lembrete.id !== id));
+  const deletarLembrete = async (id: string) => {
+    try {
+      const success = await storageService.deleteLembrete(id);
+      
+      if (success) {
+        setLembretes(lembretes.filter((lembrete) => lembrete.id !== id));
+        mostrarToast("Lembrete deletado com sucesso!");
+      }
+    } catch (error) {
+      console.error("Error deleting lembrete:", error);
+      mostrarToast("Erro ao deletar lembrete", "error");
+    }
   };
 
   const iniciarEdicao = (lembrete: Lembrete) => {
@@ -100,11 +144,10 @@ export default function Home() {
     );
   };
 
-  const confirmarDelecao = () => {
+  const confirmarDelecao = async () => {
     if (lembreteParaDeletar) {
-      deletarLembrete(lembreteParaDeletar);
+      await deletarLembrete(lembreteParaDeletar);
       setLembreteParaDeletar(null);
-      mostrarToast("Lembrete deletado com sucesso!");
     }
   };
 
@@ -251,6 +294,9 @@ export default function Home() {
             </>
           )}
         </div>
+
+        {/* Componente de Export/Import */}
+        <DataExport />
 
         {/* Rodapé com estatísticas quando houver lembretes */}
         {lembretes.length > 0 && (
