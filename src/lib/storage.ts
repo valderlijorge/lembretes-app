@@ -1,12 +1,11 @@
 import { Lembrete } from '@/types/lembrete';
 import { 
-  saveToNetlify, 
-  loadFromNetlify, 
-  deleteFromNetlify, 
-  isNetlifyBlobsAvailable 
-} from './netlify-storage';
+  saveToJsonBin, 
+  loadFromJsonBin, 
+  isJsonBinAvailable 
+} from './jsonbin-storage';
 
-export type StorageType = 'localStorage' | 'netlify' | 'hybrid';
+export type StorageType = 'localStorage' | 'jsonbin';
 
 export interface StorageInfo {
   type: StorageType;
@@ -17,53 +16,39 @@ export interface StorageInfo {
 
 class StorageService {
   private storageType: StorageType = 'localStorage';
-  private syncEnabled = true;
   private migrationCompleted = false;
+  private binId: string | null = null;
 
   constructor() {
     this.initialize();
   }
 
   private async initialize(): Promise<void> {
-    // Verificar se Netlify Blobs está disponível
-    const netlifyAvailable = isNetlifyBlobsAvailable();
+    // Verificar se JSONBin está disponível
+    const jsonBinAvailable = isJsonBinAvailable();
     
-    if (netlifyAvailable) {
-      this.storageType = 'netlify';
-      console.log('Using Netlify Blobs storage');
+    if (jsonBinAvailable) {
+      this.storageType = 'jsonbin';
+      console.log('Using JSONBin cloud storage');
+      
+      // Try to load existing bin ID
+      this.binId = localStorage.getItem('jsonBinId');
     } else {
       this.storageType = 'localStorage';
       console.log('Using localStorage storage');
     }
 
-    // Tentar migrar dados do localStorage se necessário
-    await this.migrateFromLocalStorage();
+    // Carregar dados iniciais
+    await this.loadInitialData();
   }
 
-  private async migrateFromLocalStorage(): Promise<void> {
-    if (this.migrationCompleted || this.storageType !== 'netlify') {
-      return;
-    }
-
+  private async loadInitialData(): Promise<void> {
     try {
-      const localStorageData = this.getFromLocalStorage();
-      
-      if (localStorageData.length > 0) {
-        console.log(`Migrating ${localStorageData.length} items from localStorage to Netlify Blobs`);
-        
-        // Salvar no Netlify
-        await saveToNetlify('lembretes', localStorageData);
-        
-        // Limpar localStorage após migração bem-sucedida
-        localStorage.removeItem('lembretes');
-        console.log('Migration completed successfully');
-      }
+      const lembretes = await this.getLembretes();
+      console.log(`Loaded ${lembretes.length} lembretes from ${this.storageType}`);
     } catch (error) {
-      console.warn('Migration failed, keeping localStorage data:', error);
-      this.storageType = 'localStorage';
+      console.error('Error loading initial data:', error);
     }
-    
-    this.migrationCompleted = true;
   }
 
   private getFromLocalStorage(): Lembrete[] {
@@ -85,9 +70,9 @@ class StorageService {
 
   async getLembretes(): Promise<Lembrete[]> {
     switch (this.storageType) {
-      case 'netlify':
-        const result = await loadFromNetlify('lembretes');
-        return result.success ? (result.data || []) : [];
+      case 'jsonbin':
+        const data = await loadFromJsonBin(this.binId || undefined);
+        return data || [];
       
       case 'localStorage':
         return this.getFromLocalStorage();
@@ -104,17 +89,21 @@ class StorageService {
     };
 
     switch (this.storageType) {
-      case 'netlify':
-        // Primeiro carregar dados existentes
-        const getCurrentResult = await loadFromNetlify('lembretes');
-        const current = getCurrentResult.success ? (getCurrentResult.data || []) : [];
-        
-        // Adicionar novo lembrete
+      case 'jsonbin':
+        // Carregar dados atuais
+        const current = await this.getLembretes();
         const updated = [lembrete, ...current];
         
-        // Salvar no Netlify
-        await saveToNetlify('lembretes', updated);
-        return lembrete;
+        // Salvar no JSONBin
+        const result = await saveToJsonBin(updated);
+        if (result) {
+          this.binId = result.id;
+          localStorage.setItem('jsonBinId', result.id);
+          console.log('Saved to JSONBin:', result.id);
+          return lembrete;
+        } else {
+          throw new Error('Failed to save to JSONBin');
+        }
       
       case 'localStorage':
         const localCurrent = this.getFromLocalStorage();
@@ -132,15 +121,10 @@ class StorageService {
 
   async updateLembrete(id: string, updates: Partial<Pick<Lembrete, 'texto' | 'concluido' | 'concluidoEm'>>): Promise<Lembrete | null> {
     switch (this.storageType) {
-      case 'netlify':
+      case 'jsonbin':
         // Carregar dados atuais
-        const getResult = await loadFromNetlify('lembretes');
-        if (!getResult.success) {
-          return null;
-        }
-        
-        const current = getResult.data || [];
-        const index = current.findIndex((l: Lembrete) => l.id === id);
+        const current = await this.getLembretes();
+        const index = current.findIndex(l => l.id === id);
         
         if (index === -1) {
           return null;
@@ -149,13 +133,18 @@ class StorageService {
         // Atualizar lembrete
         current[index] = { ...current[index], ...updates };
         
-        // Salvar no Netlify
-        await saveToNetlify('lembretes', current);
-        return current[index];
+        // Salvar no JSONBin
+        const result = await saveToJsonBin(current);
+        if (result) {
+          console.log('Updated to JSONBin:', result.id);
+          return current[index];
+        } else {
+          throw new Error('Failed to update JSONBin');
+        }
       
       case 'localStorage':
         const localCurrent = this.getFromLocalStorage();
-        const localIndex = localCurrent.findIndex((l: Lembrete) => l.id === id);
+        const localIndex = localCurrent.findIndex(l => l.id === id);
         
         if (localIndex === -1) {
           return null;
@@ -167,7 +156,7 @@ class StorageService {
       
       default:
         const fallbackCurrent = this.getFromLocalStorage();
-        const fallbackIndex = fallbackCurrent.findIndex((l: Lembrete) => l.id === id);
+        const fallbackIndex = fallbackCurrent.findIndex(l => l.id === id);
         
         if (fallbackIndex === -1) {
           return null;
@@ -181,23 +170,24 @@ class StorageService {
 
   async deleteLembrete(id: string): Promise<boolean> {
     switch (this.storageType) {
-      case 'netlify':
+      case 'jsonbin':
         // Carregar dados atuais
-        const getResult = await loadFromNetlify('lembretes');
-        if (!getResult.success) {
-          return false;
-        }
-        
-        const current = getResult.data || [];
-        const filtered = current.filter((l: Lembrete) => l.id !== id);
+        const current = await this.getLembretes();
+        const filtered = current.filter(l => l.id !== id);
         const wasDeleted = filtered.length < current.length;
         
         if (wasDeleted) {
-          // Salvar no Netlify
-          await saveToNetlify('lembretes', filtered);
+          // Salvar no JSONBin
+          const result = await saveToJsonBin(filtered);
+          if (result) {
+            console.log('Deleted from JSONBin:', result.id);
+            return true;
+          } else {
+            throw new Error('Failed to delete from JSONBin');
+          }
         }
         
-        return wasDeleted;
+        return false;
       
       case 'localStorage':
         const localCurrent = this.getFromLocalStorage();
@@ -262,21 +252,34 @@ class StorageService {
         };
       }
       
-      // Limpar dados atuais
-      await this.clearAllData();
-      
       // Importar novos dados
-      if (this.storageType === 'netlify') {
-        await saveToNetlify('lembretes', validLembretes);
-      } else {
-        this.saveToLocalStorage(validLembretes);
+      switch (this.storageType) {
+        case 'jsonbin':
+          const result = await saveToJsonBin(validLembretes);
+          if (result) {
+            this.binId = result.id;
+            localStorage.setItem('jsonBinId', result.id);
+            return { 
+              success: true, 
+              imported: validLembretes.length, 
+              message: `${validLembretes.length} lembretes importados com sucesso (JSONBin: ${result.id})` 
+            };
+          } else {
+            return { 
+              success: false, 
+              imported: 0, 
+              message: 'Erro ao salvar no JSONBin' 
+            };
+          }
+        
+        default:
+          this.saveToLocalStorage(validLembretes);
+          return { 
+            success: true, 
+            imported: validLembretes.length, 
+            message: `${validLembretes.length} lembretes importados com sucesso (localStorage)` 
+          };
       }
-      
-      return { 
-        success: true, 
-        imported: validLembretes.length, 
-        message: `${validLembretes.length} lembretes importados com sucesso` 
-      };
     } catch (error) {
       return { 
         success: false, 
@@ -288,8 +291,13 @@ class StorageService {
 
   async clearAllData(): Promise<void> {
     switch (this.storageType) {
-      case 'netlify':
-        await deleteFromNetlify('lembretes');
+      case 'jsonbin':
+        const result = await saveToJsonBin([]);
+        if (result) {
+          this.binId = result.id;
+          localStorage.setItem('jsonBinId', result.id);
+          console.log('Cleared JSONBin:', result.id);
+        }
         break;
       
       case 'localStorage':
@@ -302,16 +310,16 @@ class StorageService {
     }
   }
 
-  async getStorageInfo(): Promise<StorageInfo> {
+  async getStorageInfo(): Promise<{ type: StorageType; available: boolean; itemCount: number }> {
     let itemCount = 0;
     let available = true;
     
     try {
-      if (this.storageType === 'netlify') {
-        available = isNetlifyBlobsAvailable();
+      if (this.storageType === 'jsonbin') {
+        available = isJsonBinAvailable();
         if (available) {
-          const result = await loadFromNetlify('lembretes');
-          itemCount = result.success && result.data ? result.data.length : 0;
+          const data = await loadFromJsonBin(this.binId || undefined);
+          itemCount = data ? data.length : 0;
         }
       } else {
         itemCount = this.getFromLocalStorage().length;
@@ -325,19 +333,6 @@ class StorageService {
       available,
       itemCount,
     };
-  }
-
-  // Método para forçar backup no localStorage (se estiver usando Netlify)
-  async createBackup(): Promise<void> {
-    if (this.storageType === 'netlify') {
-      try {
-        const lembretes = await this.getLembretes();
-        this.saveToLocalStorage(lembretes);
-        console.log('Backup created in localStorage');
-      } catch (error) {
-        console.warn('Failed to create backup:', error);
-      }
-    }
   }
 }
 

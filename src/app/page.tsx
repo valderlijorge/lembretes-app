@@ -44,11 +44,7 @@ export default function Home() {
     loadLembretes();
   }, []);
 
-  useEffect(() => {
-    if (!isLoading && lembretes.length > 0) {
-      storageService.createBackup();
-    }
-  }, [lembretes, isLoading]);
+  
 
   const adicionarLembrete = async (texto: string) => {
     try {

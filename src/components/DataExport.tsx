@@ -93,7 +93,7 @@ export default function DataExport() {
           <h3 className="font-semibold text-gray-900 mb-2">Gerenciamento de Dados</h3>
           <div className="text-sm text-gray-600">
             <p>Storage: <span className="font-medium">{storageInfoState.type}</span></p>
-            <p>Total de lembretes: <span className="font-medium">{storageInfoState.itemCount}</span></p>
+            <p>Total de lembretes: <span className="font-medium">{storageInfoState?.itemCount || 0}</span></p>
             {!storageInfoState.available && (
               <p className="text-orange-600">⚠️ Storage indisponível no momento</p>
             )}
