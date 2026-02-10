@@ -24,10 +24,11 @@ class StorageService {
   }
 
   private async initialize(): Promise<void> {
-    // Verificar se JSONBin está disponível
+    // Verificar se JSONBin está disponível e se estamos no browser
     const jsonBinAvailable = isJsonBinAvailable();
+    const isBrowser = typeof window !== 'undefined';
     
-    if (jsonBinAvailable) {
+    if (jsonBinAvailable && isBrowser) {
       this.storageType = 'jsonbin';
       console.log('Using JSONBin cloud storage');
       
@@ -38,8 +39,10 @@ class StorageService {
       console.log('Using localStorage storage');
     }
 
-    // Carregar dados iniciais
-    await this.loadInitialData();
+    // Carregar dados iniciais apenas no browser
+    if (isBrowser) {
+      await this.loadInitialData();
+    }
   }
 
   private async loadInitialData(): Promise<void> {
@@ -53,6 +56,12 @@ class StorageService {
 
   private getFromLocalStorage(): Lembrete[] {
     try {
+      // Check if localStorage is available (client-side only)
+      if (typeof window === 'undefined') {
+        console.warn('localStorage accessed in server-side context');
+        return [];
+      }
+      
       const data = localStorage.getItem('lembretes');
       return data ? JSON.parse(data) : [];
     } catch {
@@ -62,6 +71,12 @@ class StorageService {
 
   private saveToLocalStorage(lembretes: Lembrete[]): void {
     try {
+      // Check if localStorage is available (client-side only)
+      if (typeof window === 'undefined') {
+        console.warn('localStorage accessed in server-side context');
+        return;
+      }
+      
       localStorage.setItem('lembretes', JSON.stringify(lembretes));
     } catch (error) {
       console.warn('Failed to save to localStorage:', error);
@@ -71,8 +86,23 @@ class StorageService {
   async getLembretes(): Promise<Lembrete[]> {
     switch (this.storageType) {
       case 'jsonbin':
-        const data = await loadFromJsonBin(this.binId || undefined);
-        return data || [];
+        // Load and cache data in localStorage for quick access
+        let cachedData = localStorage.getItem('jsonBinData') || '[]';
+        try {
+          const parsed = JSON.parse(cachedData);
+          // Validate and return if valid array
+          if (Array.isArray(parsed)) {
+            return parsed;
+          }
+        } catch {
+          // If invalid, fetch from API
+          const freshData = await loadFromJsonBin(this.binId || undefined);
+          if (freshData) {
+            localStorage.setItem('jsonBinData', JSON.stringify(freshData));
+            return freshData;
+          }
+          return [];
+        }
       
       case 'localStorage':
         return this.getFromLocalStorage();
@@ -124,7 +154,7 @@ class StorageService {
       case 'jsonbin':
         // Carregar dados atuais
         const current = await this.getLembretes();
-        const index = current.findIndex(l => l.id === id);
+        const index = current.findIndex((l: Lembrete) => l.id === id);
         
         if (index === -1) {
           return null;
@@ -144,7 +174,7 @@ class StorageService {
       
       case 'localStorage':
         const localCurrent = this.getFromLocalStorage();
-        const localIndex = localCurrent.findIndex(l => l.id === id);
+        const localIndex = localCurrent.findIndex((l: Lembrete) => l.id === id);
         
         if (localIndex === -1) {
           return null;
@@ -156,7 +186,7 @@ class StorageService {
       
       default:
         const fallbackCurrent = this.getFromLocalStorage();
-        const fallbackIndex = fallbackCurrent.findIndex(l => l.id === id);
+        const fallbackIndex = fallbackCurrent.findIndex((l: Lembrete) => l.id === id);
         
         if (fallbackIndex === -1) {
           return null;
@@ -173,7 +203,7 @@ class StorageService {
       case 'jsonbin':
         // Carregar dados atuais
         const current = await this.getLembretes();
-        const filtered = current.filter(l => l.id !== id);
+        const filtered = current.filter((l: Lembrete) => l.id !== id);
         const wasDeleted = filtered.length < current.length;
         
         if (wasDeleted) {
@@ -191,7 +221,7 @@ class StorageService {
       
       case 'localStorage':
         const localCurrent = this.getFromLocalStorage();
-        const localFiltered = localCurrent.filter(l => l.id !== id);
+        const localFiltered = localCurrent.filter((l: Lembrete) => l.id !== id);
         const localWasDeleted = localFiltered.length < localCurrent.length;
         
         if (localWasDeleted) {
@@ -202,7 +232,7 @@ class StorageService {
       
       default:
         const fallbackCurrent = this.getFromLocalStorage();
-        const fallbackFiltered = fallbackCurrent.filter(l => l.id !== id);
+        const fallbackFiltered = fallbackCurrent.filter((l: Lembrete) => l.id !== id);
         const fallbackWasDeleted = fallbackFiltered.length < fallbackCurrent.length;
         
         if (fallbackWasDeleted) {
@@ -301,16 +331,16 @@ class StorageService {
         break;
       
       case 'localStorage':
-        localStorage.removeItem('lembretes');
+        this.saveToLocalStorage([]);
         break;
       
       default:
-        localStorage.removeItem('lembretes');
+        this.saveToLocalStorage([]);
         break;
     }
   }
 
-  async getStorageInfo(): Promise<{ type: StorageType; available: boolean; itemCount: number }> {
+  getStorageInfo(): { type: StorageType; available: boolean; itemCount: number } {
     let itemCount = 0;
     let available = true;
     
@@ -318,8 +348,10 @@ class StorageService {
       if (this.storageType === 'jsonbin') {
         available = isJsonBinAvailable();
         if (available) {
-          const data = await loadFromJsonBin(this.binId || undefined);
-          itemCount = data ? data.length : 0;
+          // Use synchronous check to avoid await in non-async
+          const data = localStorage.getItem('jsonBinData') || '[]';
+          const parsed = JSON.parse(data);
+          itemCount = Array.isArray(parsed) ? parsed.length : 0;
         }
       } else {
         itemCount = this.getFromLocalStorage().length;

@@ -1,5 +1,5 @@
 // JSONBin.io API wrapper - Simple cross-device storage
-const JSONBIN_API = 'https://api.jsonbin.io/v3/b';
+const JSONBIN_API = "https://api.jsonbin.io/v3/b";
 
 export interface JsonBinResponse {
   success: boolean;
@@ -17,17 +17,19 @@ export interface JsonBinResult {
 export async function saveToJsonBin(data: any): Promise<JsonBinResult | null> {
   try {
     const response = await fetch(`${JSONBIN_API}`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'X-Master-Key': process.env.NEXT_PUBLIC_JSONBIN_KEY || '$2b$10$FQJzSQiQKqBQ2C6VtP5Xm6sqhOaKOj7VVBuW$'
+        "Content-Type": "application/json",
+        "X-Master-Key":
+          process.env.NEXT_PUBLIC_JSONBIN_KEY ||
+          "$2b$10$FQJzSQiQKqBQ2C6VtP5Xm6sqhOaKOj7VVBuW$",
       },
       body: JSON.stringify({
-        name: 'lembretes-app',
+        name: "lembretes-app",
         data: JSON.stringify(data),
         versioning: false,
-        customId: 'lembretes-app-data'
-      })
+        customId: "lembretes-app-data",
+      }),
     });
 
     if (!response.ok) {
@@ -35,18 +37,18 @@ export async function saveToJsonBin(data: any): Promise<JsonBinResult | null> {
     }
 
     const result = await response.json();
-    
+
     if (!result.success) {
-      throw new Error(result.error || 'Unknown error');
+      throw new Error(result.error || "Unknown error");
     }
 
     return {
       id: result.metadata.id,
       url: result.metadata.url,
-      accessKey: result.metadata.accessKey
+      accessKey: result.metadata.accessKey,
     };
   } catch (error) {
-    console.error('Error saving to JSONBin:', error);
+    console.error("Error saving to JSONBin:", error);
     return null;
   }
 }
@@ -55,13 +57,16 @@ export async function saveToJsonBin(data: any): Promise<JsonBinResult | null> {
 export async function loadFromJsonBin(binId?: string): Promise<any | null> {
   try {
     // Use saved bin ID from localStorage, or provided ID
-    const savedBinId = binId || localStorage.getItem('jsonBinId') || 'lembretes-app-data';
-    
+    const savedBinId =
+      binId || localStorage.getItem("jsonBinId") || "lembretes-app-data";
+
     const response = await fetch(`${JSONBIN_API}/${savedBinId}/latest`, {
-      method: 'GET',
+      method: "GET",
       headers: {
-        'X-Master-Key': process.env.NEXT_PUBLIC_JSONBIN_KEY || '$2b$10$FQJzSQiQKqBQ2C6VtP5Xm6sqhOaKOj7VVBuW$'
-      }
+        "X-Master-Key":
+          process.env.NEXT_PUBLIC_JSONBIN_KEY ||
+          "$2b$10$FQJzSQiQKqBQ2C6VtP5Xm6sqhOaKOj7VVBuW$",
+      },
     });
 
     if (!response.ok) {
@@ -70,20 +75,20 @@ export async function loadFromJsonBin(binId?: string): Promise<any | null> {
     }
 
     const result = await response.json();
-    
+
     if (!result.success) {
-      console.warn('JSONBin error:', result.error);
+      console.warn("JSONBin error:", result.error);
       return null;
     }
 
     // Save bin ID if we loaded successfully
     if (!binId) {
-      localStorage.setItem('jsonBinId', savedBinId);
+      localStorage.setItem("jsonBinId", savedBinId);
     }
 
     return result.record?.data || null;
   } catch (error) {
-    console.error('Error loading from JSONBin:', error);
+    console.error("Error loading from JSONBin:", error);
     return null;
   }
 }
