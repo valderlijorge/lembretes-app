@@ -1,14 +1,12 @@
 import { Lembrete } from '@/types/lembrete';
 import { 
-  isDatabaseAvailable, 
-  getAllLembretes, 
-  createLembrete, 
-  updateLembrete, 
-  deleteLembrete as deleteLembreteFromDB,
-  bulkInsertLembretes 
-} from './database';
+  saveToNetlify, 
+  loadFromNetlify, 
+  deleteFromNetlify, 
+  isNetlifyBlobsAvailable 
+} from './netlify-storage';
 
-export type StorageType = 'localStorage' | 'sqlite' | 'hybrid';
+export type StorageType = 'localStorage' | 'netlify' | 'hybrid';
 
 export interface StorageInfo {
   type: StorageType;
@@ -27,12 +25,12 @@ class StorageService {
   }
 
   private async initialize(): Promise<void> {
-    // Verificar se SQLite está disponível
-    const sqliteAvailable = isDatabaseAvailable();
+    // Verificar se Netlify Blobs está disponível
+    const netlifyAvailable = isNetlifyBlobsAvailable();
     
-    if (sqliteAvailable) {
-      this.storageType = 'sqlite';
-      console.log('Using SQLite storage');
+    if (netlifyAvailable) {
+      this.storageType = 'netlify';
+      console.log('Using Netlify Blobs storage');
     } else {
       this.storageType = 'localStorage';
       console.log('Using localStorage storage');
@@ -43,7 +41,7 @@ class StorageService {
   }
 
   private async migrateFromLocalStorage(): Promise<void> {
-    if (this.migrationCompleted || this.storageType !== 'sqlite') {
+    if (this.migrationCompleted || this.storageType !== 'netlify') {
       return;
     }
 
@@ -51,8 +49,10 @@ class StorageService {
       const localStorageData = this.getFromLocalStorage();
       
       if (localStorageData.length > 0) {
-        console.log(`Migrating ${localStorageData.length} items from localStorage to SQLite`);
-        bulkInsertLembretes(localStorageData);
+        console.log(`Migrating ${localStorageData.length} items from localStorage to Netlify Blobs`);
+        
+        // Salvar no Netlify
+        await saveToNetlify('lembretes', localStorageData);
         
         // Limpar localStorage após migração bem-sucedida
         localStorage.removeItem('lembretes');
@@ -85,8 +85,9 @@ class StorageService {
 
   async getLembretes(): Promise<Lembrete[]> {
     switch (this.storageType) {
-      case 'sqlite':
-        return getAllLembretes();
+      case 'netlify':
+        const result = await loadFromNetlify('lembretes');
+        return result.success ? (result.data || []) : [];
       
       case 'localStorage':
         return this.getFromLocalStorage();
@@ -103,43 +104,58 @@ class StorageService {
     };
 
     switch (this.storageType) {
-      case 'sqlite':
-        return createLembrete(lembrete);
-      
-      case 'localStorage':
-        const current = this.getFromLocalStorage();
+      case 'netlify':
+        // Primeiro carregar dados existentes
+        const getCurrentResult = await loadFromNetlify('lembretes');
+        const current = getCurrentResult.success ? (getCurrentResult.data || []) : [];
+        
+        // Adicionar novo lembrete
         const updated = [lembrete, ...current];
-        this.saveToLocalStorage(updated);
+        
+        // Salvar no Netlify
+        await saveToNetlify('lembretes', updated);
         return lembrete;
       
-      default:
+      case 'localStorage':
         const localCurrent = this.getFromLocalStorage();
         const localUpdated = [lembrete, ...localCurrent];
         this.saveToLocalStorage(localUpdated);
+        return lembrete;
+      
+      default:
+        const fallbackCurrent = this.getFromLocalStorage();
+        const fallbackUpdated = [lembrete, ...fallbackCurrent];
+        this.saveToLocalStorage(fallbackUpdated);
         return lembrete;
     }
   }
 
   async updateLembrete(id: string, updates: Partial<Pick<Lembrete, 'texto' | 'concluido' | 'concluidoEm'>>): Promise<Lembrete | null> {
     switch (this.storageType) {
-      case 'sqlite':
-        return updateLembrete(id, updates);
-      
-      case 'localStorage':
-        const current = this.getFromLocalStorage();
-        const index = current.findIndex(l => l.id === id);
+      case 'netlify':
+        // Carregar dados atuais
+        const getResult = await loadFromNetlify('lembretes');
+        if (!getResult.success) {
+          return null;
+        }
+        
+        const current = getResult.data || [];
+        const index = current.findIndex((l: Lembrete) => l.id === id);
         
         if (index === -1) {
           return null;
         }
         
+        // Atualizar lembrete
         current[index] = { ...current[index], ...updates };
-        this.saveToLocalStorage(current);
+        
+        // Salvar no Netlify
+        await saveToNetlify('lembretes', current);
         return current[index];
       
-      default:
+      case 'localStorage':
         const localCurrent = this.getFromLocalStorage();
-        const localIndex = localCurrent.findIndex(l => l.id === id);
+        const localIndex = localCurrent.findIndex((l: Lembrete) => l.id === id);
         
         if (localIndex === -1) {
           return null;
@@ -148,26 +164,42 @@ class StorageService {
         localCurrent[localIndex] = { ...localCurrent[localIndex], ...updates };
         this.saveToLocalStorage(localCurrent);
         return localCurrent[localIndex];
+      
+      default:
+        const fallbackCurrent = this.getFromLocalStorage();
+        const fallbackIndex = fallbackCurrent.findIndex((l: Lembrete) => l.id === id);
+        
+        if (fallbackIndex === -1) {
+          return null;
+        }
+        
+        fallbackCurrent[fallbackIndex] = { ...fallbackCurrent[fallbackIndex], ...updates };
+        this.saveToLocalStorage(fallbackCurrent);
+        return fallbackCurrent[fallbackIndex];
     }
   }
 
   async deleteLembrete(id: string): Promise<boolean> {
     switch (this.storageType) {
-      case 'sqlite':
-        return deleteLembreteFromDB(id);
-      
-      case 'localStorage':
-        const current = this.getFromLocalStorage();
-        const filtered = current.filter(l => l.id !== id);
+      case 'netlify':
+        // Carregar dados atuais
+        const getResult = await loadFromNetlify('lembretes');
+        if (!getResult.success) {
+          return false;
+        }
+        
+        const current = getResult.data || [];
+        const filtered = current.filter((l: Lembrete) => l.id !== id);
         const wasDeleted = filtered.length < current.length;
         
         if (wasDeleted) {
-          this.saveToLocalStorage(filtered);
+          // Salvar no Netlify
+          await saveToNetlify('lembretes', filtered);
         }
         
         return wasDeleted;
       
-      default:
+      case 'localStorage':
         const localCurrent = this.getFromLocalStorage();
         const localFiltered = localCurrent.filter(l => l.id !== id);
         const localWasDeleted = localFiltered.length < localCurrent.length;
@@ -177,6 +209,17 @@ class StorageService {
         }
         
         return localWasDeleted;
+      
+      default:
+        const fallbackCurrent = this.getFromLocalStorage();
+        const fallbackFiltered = fallbackCurrent.filter(l => l.id !== id);
+        const fallbackWasDeleted = fallbackFiltered.length < fallbackCurrent.length;
+        
+        if (fallbackWasDeleted) {
+          this.saveToLocalStorage(fallbackFiltered);
+        }
+        
+        return fallbackWasDeleted;
     }
   }
 
@@ -223,8 +266,8 @@ class StorageService {
       await this.clearAllData();
       
       // Importar novos dados
-      if (this.storageType === 'sqlite') {
-        bulkInsertLembretes(validLembretes);
+      if (this.storageType === 'netlify') {
+        await saveToNetlify('lembretes', validLembretes);
       } else {
         this.saveToLocalStorage(validLembretes);
       }
@@ -245,12 +288,8 @@ class StorageService {
 
   async clearAllData(): Promise<void> {
     switch (this.storageType) {
-      case 'sqlite':
-        // SQLite não tem TRUNCATE, então precisamos deletar um por um
-        const allLembretes = getAllLembretes();
-        for (const lembrete of allLembretes) {
-          await this.deleteLembrete(lembrete.id);
-        }
+      case 'netlify':
+        await deleteFromNetlify('lembretes');
         break;
       
       case 'localStorage':
@@ -263,14 +302,17 @@ class StorageService {
     }
   }
 
-  getStorageInfo(): StorageInfo {
+  async getStorageInfo(): Promise<StorageInfo> {
     let itemCount = 0;
     let available = true;
     
     try {
-      if (this.storageType === 'sqlite') {
-        itemCount = getAllLembretes().length;
-        available = isDatabaseAvailable();
+      if (this.storageType === 'netlify') {
+        available = isNetlifyBlobsAvailable();
+        if (available) {
+          const result = await loadFromNetlify('lembretes');
+          itemCount = result.success && result.data ? result.data.length : 0;
+        }
       } else {
         itemCount = this.getFromLocalStorage().length;
       }
@@ -285,9 +327,9 @@ class StorageService {
     };
   }
 
-  // Método para forçar backup no localStorage (se estiver usando SQLite)
+  // Método para forçar backup no localStorage (se estiver usando Netlify)
   async createBackup(): Promise<void> {
-    if (this.storageType === 'sqlite') {
+    if (this.storageType === 'netlify') {
       try {
         const lembretes = await this.getLembretes();
         this.saveToLocalStorage(lembretes);

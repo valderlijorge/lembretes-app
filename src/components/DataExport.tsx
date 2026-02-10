@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { storageService } from "@/lib/storage";
 
 export default function DataExport() {
@@ -10,6 +10,19 @@ export default function DataExport() {
     success: boolean;
     message: string;
   } | null>(null);
+  const [storageInfoState, setStorageInfoState] = useState<{
+    type: string;
+    available: boolean;
+    itemCount: number;
+  }>({ type: 'localStorage', available: true, itemCount: 0 });
+
+  useEffect(() => {
+    const loadStorageInfo = async () => {
+      const info = await storageService.getStorageInfo();
+      setStorageInfoState(info);
+    };
+    loadStorageInfo();
+  }, []);
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -72,8 +85,6 @@ export default function DataExport() {
     }
   };
 
-  const storageInfo = storageService.getStorageInfo();
-
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
       <div className="space-y-4">
@@ -81,9 +92,9 @@ export default function DataExport() {
         <div>
           <h3 className="font-semibold text-gray-900 mb-2">Gerenciamento de Dados</h3>
           <div className="text-sm text-gray-600">
-            <p>Storage: <span className="font-medium">{storageInfo.type}</span></p>
-            <p>Total de lembretes: <span className="font-medium">{storageInfo.itemCount}</span></p>
-            {!storageInfo.available && (
+            <p>Storage: <span className="font-medium">{storageInfoState.type}</span></p>
+            <p>Total de lembretes: <span className="font-medium">{storageInfoState.itemCount}</span></p>
+            {!storageInfoState.available && (
               <p className="text-orange-600">⚠️ Storage indisponível no momento</p>
             )}
           </div>
@@ -93,10 +104,10 @@ export default function DataExport() {
         <div className="flex gap-2">
           <button
             onClick={handleExport}
-            disabled={isExporting || storageInfo.itemCount === 0}
+            disabled={isExporting || storageInfoState.itemCount === 0}
             className={`
               px-4 py-2 rounded-lg font-medium transition-all duration-200 text-sm
-              ${isExporting || storageInfo.itemCount === 0
+              ${isExporting || storageInfoState.itemCount === 0
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                 : 'bg-green-500 text-white hover:bg-green-600 hover:shadow-md'
               }
