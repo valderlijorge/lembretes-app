@@ -1,5 +1,10 @@
 [build.environment]
   NODE_VERSION = "20"
 
-[[plugins]]
-  package = "@netlify/plugin-nextjs"
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[headers]
+  for = "/*"
+  values = { Basic-Auth = "admin@lembretes123" }
